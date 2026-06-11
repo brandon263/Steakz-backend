@@ -1,0 +1,4 @@
+test
+DELETE called: role=BRANCH_MANAGER id=17 branchId=1 itemBranchId=1
+count result=1
+deactivated
