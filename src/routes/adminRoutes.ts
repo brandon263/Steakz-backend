@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
+import { Prisma } from '@prisma/client';
 import prisma from '../lib/prisma.js';
 import { verifyToken, requireRole } from '../middleware/auth.js';
 
@@ -33,25 +34,52 @@ router.get('/branches', async (_req: Request, res: Response) => {
 router.post('/users', async (req: Request, res: Response) => {
   const { name, email, password, role, branchId, salary } = req.body as {
     name: string; email: string; password: string;
-    role: string; branchId?: number; salary?: number;
+    role: string; branchId?: number | string; salary?: number;
   };
   if (!name || !email || !password || !role) {
     res.status(400).json({ error: 'name, email, password and role are required.' });
     return;
   }
+
+  const branchIdNumber = branchId === undefined || branchId === null || branchId === ''
+    ? null
+    : Number(branchId);
+
+  if (branchIdNumber !== null && Number.isNaN(branchIdNumber)) {
+    res.status(400).json({ error: 'branchId must be a valid number.' });
+    return;
+  }
+
   const hashed = await bcrypt.hash(password, 10);
   try {
     const user = await prisma.user.create({
       data: {
-        name, email, password: hashed,
+        name,
+        email,
+        password: hashed,
         role: role as any,
-        branchId: branchId ?? null,
-        salary:   salary   ?? null,
+        branchId: branchIdNumber,
+        salary: salary ?? null,
       },
     });
     res.status(201).json({ message: 'User created.', userId: user.id });
-  } catch {
-    res.status(409).json({ error: 'Email already in use.' });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === 'P2002' && Array.isArray(error.meta?.target) && error.meta.target.includes('email')) {
+        res.status(409).json({ error: 'Email already in use.' });
+        return;
+      }
+      if (error.code === 'P2003') {
+        res.status(400).json({ error: 'Invalid branchId or related record missing.' });
+        return;
+      }
+    }
+    if (error instanceof Prisma.PrismaClientValidationError) {
+      res.status(400).json({ error: 'Invalid user data provided.' });
+      return;
+    }
+    console.error('Admin user creation failed:', error);
+    res.status(500).json({ error: 'Unable to create user.' });
   }
 });
 
@@ -99,8 +127,20 @@ router.delete('/users/:id', async (req: Request, res: Response) => {
   const idParam = req.params['id'];
   const idString = Array.isArray(idParam) ? idParam[0] : idParam;
   const id = parseInt(idString ?? '0');
-  await prisma.user.delete({ where: { id } });
-  res.json({ message: 'User deleted.' });
+
+  try {
+    await prisma.order.deleteMany({ where: { customerId: id } });
+    await prisma.booking.deleteMany({ where: { customerId: id } });
+    await prisma.user.delete({ where: { id } });
+    res.json({ message: 'User deleted.' });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+      res.status(404).json({ error: 'User not found.' });
+      return;
+    }
+    console.error('Admin user deletion failed:', error);
+    res.status(500).json({ error: 'Unable to delete user.' });
+  }
 });
 
 export default router;
