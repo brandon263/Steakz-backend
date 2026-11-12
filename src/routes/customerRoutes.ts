@@ -105,9 +105,11 @@ router.get('/orders', async (req: Request, res: Response) => {
 
 router.post('/orders', async (req: Request, res: Response) => {
   const customerId = req.user!.id;
-  const { bookingId, items } = req.body as {
+  const { bookingId, items, paymentMethod, paymentStatus } = req.body as {
     bookingId: number;
     items: { menuItemId: number; quantity: number }[];
+    paymentMethod?: string;
+    paymentStatus?: 'PENDING' | 'PAID' | 'PAID_IN_STORE';
   };
 
   if (!bookingId || !items || items.length === 0) {
@@ -155,6 +157,8 @@ router.post('/orders', async (req: Request, res: Response) => {
       bookingId,
       branchId,
       total,
+      paymentMethod: paymentMethod ?? 'CARD',
+      paymentStatus: paymentStatus ?? 'PENDING',
       items: {
         create: items.map(i => ({
           quantity:  i.quantity,
@@ -168,6 +172,42 @@ router.post('/orders', async (req: Request, res: Response) => {
     include: { items: { include: { menuItem: true } } },
   });
   res.status(201).json(order);
+});
+
+router.post('/orders/:id/pay', async (req: Request, res: Response) => {
+  const customerId = req.user!.id;
+  const idParam = req.params['id'];
+  const idString = Array.isArray(idParam) ? idParam[0] : idParam;
+  const id = parseInt(idString ?? '0', 10);
+
+  const order = await prisma.order.findUnique({ where: { id } });
+  if (!order || order.customerId !== customerId) {
+    res.status(404).json({ error: 'Order not found.' });
+    return;
+  }
+
+  const { paymentMethod, paymentStatus } = req.body as {
+    paymentMethod?: string;
+    paymentStatus?: 'PENDING' | 'PAID' | 'PAID_IN_STORE';
+  };
+
+  const resolvedMethod = paymentMethod ?? order.paymentMethod ?? 'CARD';
+  const normalizedMethod = resolvedMethod.toLowerCase();
+  const resolvedStatus = paymentStatus ?? (normalizedMethod.includes('cash') || normalizedMethod.includes('store') ? 'PAID_IN_STORE' : 'PAID');
+
+  const updated = await prisma.order.update({
+    where: { id },
+    data: {
+      paymentMethod: resolvedMethod,
+      paymentStatus: resolvedStatus,
+    },
+    include: {
+      items: { include: { menuItem: true } },
+      branch: { select: { name: true } },
+    },
+  });
+
+  res.json(updated);
 });
 
 export default router;
