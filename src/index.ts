@@ -17,13 +17,23 @@ import publicRoutes        from './routes/publicRoutes.js';
 const app  = express();
 const PORT = process.env['PORT'] ?? 3001;
 
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  process.env['FRONTEND_URL'],
+].filter((origin): origin is string => Boolean(origin));
+
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
+  origin: allowedOrigins,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 app.use(express.json());
 app.use(logger);
+
+app.get('/health', (_req, res) => {
+  res.status(200).json({ status: 'ok' });
+});
 
 app.use('/api/auth',           authRoutes);
 app.use('/api/admin',          adminRoutes);
